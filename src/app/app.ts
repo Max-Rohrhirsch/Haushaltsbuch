@@ -70,6 +70,7 @@ export class App implements AfterViewChecked {
   protected newTripName = '';
   protected newTripBudget: number | null = null;
   protected tradeRepublicCsv = '';
+  protected tradeRepublicFileName = '';
   protected importStatus = '';
 
   constructor() { void this.initialize(); }
@@ -131,6 +132,14 @@ export class App implements AfterViewChecked {
     }
     this.importStatus = `${imported} Buchungen importiert${imported < rows.length ? `, ${rows.length - imported} bereits vorhanden` : ''}.`;
     await this.loadTransactions();
+  }
+  protected async selectTradeRepublicFile(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    this.tradeRepublicFileName = file.name;
+    this.tradeRepublicCsv = await file.text();
+    this.importStatus = `${this.tradeRepublicPreview().length} Vorschauzeilen aus ${file.name} geladen.`;
   }
   protected tradeRepublicPreview(): TradeRepublicRow[] { return this.parseTradeRepublicCsv(this.tradeRepublicCsv).slice(0, 8); }
   protected async addTrip(): Promise<void> { if (!this.newTripName.trim() || !this.newTripBudget) return; const id = crypto.randomUUID(); await this.repository.saveTrip({ id, name: this.newTripName.trim(), startDate: `${this.year()}-01-01`, endDate: `${this.year()}-12-31`, budget: this.newTripBudget }); this.newTripName = ''; this.newTripBudget = null; this.selectedTripId.set(id); await this.loadData(); await this.loadTransactions(); }
