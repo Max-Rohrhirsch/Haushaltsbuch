@@ -57,3 +57,33 @@ Angular CLI does not come with an end-to-end testing framework by default. You c
 ## Additional Resources
 
 For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+
+## Docker (z. B. für Raspberry Pi)
+
+Alle Nutzerdaten liegen ausschließlich im Browser (IndexedDB via `localforage`) und werden nie ins Repo oder Image geschrieben – es gibt nichts Persönliches, das vor dem Hochladen auf GitHub entfernt werden müsste.
+
+### Image lokal bauen und starten
+
+```bash
+docker compose up --build
+```
+
+Die App ist danach unter `http://localhost:8080` erreichbar (Port lässt sich in `docker-compose.yml` anpassen).
+
+### Image für Raspberry Pi (arm64) bauen und veröffentlichen
+
+Auf einem x86-Rechner per `buildx` für die Pi-Architektur bauen und in eine Registry pushen (z. B. GitHub Container Registry):
+
+```bash
+docker buildx build --platform linux/arm64 -t ghcr.io/<dein-github-user>/finance-app:latest --push .
+```
+
+Auf dem Raspberry Pi dann nur noch ziehen und starten:
+
+```bash
+docker pull ghcr.io/<dein-github-user>/finance-app:latest
+docker run -d --name finance-app --restart unless-stopped -p 8080:80 ghcr.io/<dein-github-user>/finance-app:latest
+```
+
+Alternativ mit der `docker-compose.yml` im Projekt-Root: `image:`-Zeile auf `ghcr.io/<dein-github-user>/finance-app:latest` setzen und `docker compose up -d` ausführen.
+

@@ -1,13 +1,13 @@
 import { AfterViewChecked, Component, ElementRef, ViewChild, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { use, type ECharts, init } from 'echarts/core';
-import { SankeyChart } from 'echarts/charts';
+import { PieChart, SankeyChart } from 'echarts/charts';
 import { TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import { Account, FinanceContext, InvestmentTrade, Tag, TagSection, Transaction, Trip } from './data/model/finance.model';
 import { FinanceRepository } from './data/repository/finance.repository';
 
-use([SankeyChart, TooltipComponent, CanvasRenderer]);
+use([SankeyChart, PieChart, TooltipComponent, CanvasRenderer]);
 
 type HomeTab = 'overview' | 'tags' | 'analysis' | 'accounts' | 'import';
 type TravelTab = 'overview' | 'analysis';
@@ -30,9 +30,17 @@ interface AnalysisEntry { id: string; name: string; value: number; favorite?: bo
 @Component({ selector: 'app-root', imports: [FormsModule], templateUrl: './app.html', styleUrl: './app.scss' })
 export class App implements AfterViewChecked {
   @ViewChild('cashflowChart') private cashflowChartElement?: ElementRef<HTMLDivElement>;
+  @ViewChild('pieChart') private pieChartElement?: ElementRef<HTMLDivElement>;
+  @ViewChild('pieChartModal') private pieChartModalElement?: ElementRef<HTMLDivElement>;
   private cashflowChart?: ECharts;
   private cashflowChartHost?: HTMLDivElement;
   private cashflowChartReady = false;
+  private pieChart?: ECharts;
+  private pieChartHost?: HTMLDivElement;
+  private pieChartReady = false;
+  private pieChartModal?: ECharts;
+  protected readonly pieExpanded = signal(false);
+  protected readonly openCurrencyPicker = signal<string | null>(null);
   private readonly repository = inject(FinanceRepository);
   protected readonly context = signal<FinanceContext>('home');
   protected readonly homeTab = signal<HomeTab>('overview');
@@ -52,20 +60,20 @@ export class App implements AfterViewChecked {
   private readonly allCurrencies = [{ code: 'EUR', rate: 1 }, { code: 'USD', rate: 0.92 }, { code: 'GBP', rate: 1.17 }, { code: 'JPY', rate: 0.0062 }, { code: 'THB', rate: 0.025 }, { code: 'IDR', rate: 0.000057 }, { code: 'AUD', rate: 0.61 }, { code: 'CAD', rate: 0.67 }, { code: 'CHF', rate: 1.04 }, { code: 'CNY', rate: 0.13 }, { code: 'CZK', rate: 0.039 }, { code: 'DKK', rate: 0.134 }, { code: 'HKD', rate: 0.118 }, { code: 'HUF', rate: 0.00255 }, { code: 'INR', rate: 0.011 }, { code: 'KRW', rate: 0.00068 }, { code: 'MXN', rate: 0.052 }, { code: 'NOK', rate: 0.087 }, { code: 'NZD', rate: 0.56 }, { code: 'PLN', rate: 0.23 }, { code: 'SEK', rate: 0.089 }, { code: 'SGD', rate: 0.68 }, { code: 'TRY', rate: 0.025 }, { code: 'ZAR', rate: 0.05 }];
   protected readonly selectedTrip = computed(() => this.trips().find((trip) => trip.id === this.selectedTripId()));
   protected readonly activeTransactions = computed(() => this.context() === 'travel' && this.travelScope() === 'trip' ? this.transactions().filter((transaction) => transaction.tripId === this.selectedTripId()) : this.transactions());
-  protected readonly yearTransactions = computed(() => this.activeTransactions().filter((transaction) => transaction.bookingDate.startsWith(`${this.year()}-`)));
+  protected readonly yearTransactions = computed(() => this.context() === 'travel' ? this.activeTransactions() : this.activeTransactions().filter((transaction) => transaction.bookingDate.startsWith(`${this.year()}-`)));
   protected readonly visibleTransactions = computed(() => this.yearTransactions().filter((transaction) => transaction.bookingDate.startsWith(`${this.year()}-${String(this.month() + 1).padStart(2, '0')}`)));
   protected readonly totalIncome = computed(() => this.yearTransactions().filter((transaction) => this.isIncome(transaction)).reduce((sum, transaction) => sum + transaction.amountEur, 0));
   protected readonly totalExpenses = computed(() => this.yearTransactions().filter((transaction) => this.isExpense(transaction)).reduce((sum, transaction) => sum + transaction.amountEur, 0));
   protected readonly balance = computed(() => this.totalIncome() + this.totalExpenses() + this.investmentResultForYear());
   protected readonly listedBalance = computed(() => this.yearTransactions().filter((transaction) => this.accounts().find((account) => account.id === transaction.accountId)?.listed).reduce((sum, transaction) => sum + transaction.amountEur, 0));
   protected readonly analysisEntries = computed<AnalysisEntry[]>(() => {
-    const entries: AnalysisEntry[] = this.tags().filter((tag) => !tag.parentTagId && !this.isExcluded(tag.id)).map((tag) => { const value = this.yearTotal(tag.id); return { id: tag.id, name: `${tag.favorite ? '★ ' : ''}${tag.name} · ${value >= 0 ? 'positiv' : 'negativ'}`, value, favorite: tag.favorite }; });
+    const entries: AnalysisEntry[] = this.tags().filter((tag) => !tag.parentTagId && !this.isExcluded(tag.id)).map((tag) => { const value = this.tagTotal(tag.id); return { id: tag.id, name: `${tag.favorite ? '★ ' : ''}${tag.name}`, value, favorite: tag.favorite }; });
     const untaggedIncome = this.yearTransactions().filter((transaction) => !transaction.tagId && this.isIncome(transaction)).reduce((sum, transaction) => sum + transaction.amountEur, 0);
     const untaggedExpense = this.yearTransactions().filter((transaction) => !transaction.tagId && this.isExpense(transaction)).reduce((sum, transaction) => sum + transaction.amountEur, 0);
-    if (untaggedIncome) entries.push({ id: 'other-income', name: 'Sonstiges · positiv', value: untaggedIncome });
-    if (untaggedExpense) entries.push({ id: 'other-expense', name: 'Sonstiges · negativ', value: untaggedExpense });
-    if (this.investmentResultForYear() !== 0 && !this.isExcluded('investment-result')) entries.push({ id: 'investment-result', name: `Aktiengewinne/-verluste · ${this.investmentResultForYear() >= 0 ? 'positiv' : 'negativ'}`, value: this.investmentResultForYear() });
-    return entries.sort((first, second) => Math.abs(second.value) - Math.abs(first.value));
+    if (untaggedIncome) entries.push({ id: 'other-income', name: 'Sonstiges', value: untaggedIncome });
+    if (untaggedExpense) entries.push({ id: 'other-expense', name: 'Sonstiges', value: untaggedExpense });
+    if (this.context() === 'home' && this.investmentResultForYear() !== 0 && !this.isExcluded('investment-result')) entries.push({ id: 'investment-result', name: 'Aktiengewinne/-verluste', value: this.investmentResultForYear() });
+    return entries.filter((entry) => Math.abs(entry.value) >= 0.005).sort((first, second) => Math.abs(second.value) - Math.abs(first.value));
   });
   protected readonly pieEntries = computed(() => this.analysisEntries().filter((entry) => entry.value < 0));
   protected readonly analysisTags = computed(() => this.analysisEntries());
@@ -89,6 +97,7 @@ export class App implements AfterViewChecked {
   protected newTripBudget: number | null = null;
   protected tradeRepublicCsv = '';
   protected tradeRepublicFileName = '';
+  protected readonly tradeRepublicRows = signal<TradeRepublicRow[]>([]);
   protected importStatus = '';
   protected currencyQuery = '';
   protected forceAutoTagging = false;
@@ -110,20 +119,36 @@ export class App implements AfterViewChecked {
   protected cellTotal(tagId: string, month: number): number { return this.yearTransactions().filter((transaction) => transaction.tagId === tagId && transaction.bookingDate.startsWith(`${this.year()}-${String(month + 1).padStart(2, '0')}`)).reduce((sum, transaction) => sum + transaction.amountEur, 0); }
   protected yearTotal(tagId: string): number { if (tagId === 'investment-result') return this.investmentResultForYear(); if (tagId === 'other-income') return this.yearTransactions().filter((transaction) => !transaction.tagId && this.isIncome(transaction)).reduce((sum, transaction) => sum + transaction.amountEur, 0); if (tagId === 'other-expense') return this.yearTransactions().filter((transaction) => !transaction.tagId && this.isExpense(transaction)).reduce((sum, transaction) => sum + transaction.amountEur, 0); return this.yearTransactions().filter((transaction) => transaction.tagId === tagId && (this.isIncome(transaction) || this.isExpense(transaction))).reduce((sum, transaction) => sum + transaction.amountEur, 0); }
   protected childTags(parentId: string): Tag[] { return this.tags().filter((tag) => tag.parentTagId === parentId && !this.isExcluded(tag.id)); }
+  protected directChildTags(parentId: string): Tag[] { return this.tags().filter((tag) => tag.parentTagId === parentId); }
+  protected tagTotal(tagId: string): number { return this.directChildTags(tagId).reduce((sum, child) => sum + this.tagTotal(child.id), this.yearTotal(tagId)); }
+  protected tagCellTotal(tagId: string, month: number): number { return this.directChildTags(tagId).reduce((sum, child) => sum + this.tagCellTotal(child.id, month), this.cellTotal(tagId, month)); }
   protected sectionTags(section: TagSection): Tag[] { return this.tagsInSection(section.id).filter((tag) => !tag.parentTagId && !this.isExcluded(tag.id)); }
-  protected pieGradient(): string { let cursor = 0; const colors = ['#f20d5d', '#112d4b', '#4f87b9', '#f5a623', '#16845a', '#8c5bb3']; const total = this.pieEntries().reduce((sum, entry) => sum + Math.abs(entry.value), 0); const stops = this.pieEntries().map((entry, index) => { const start = cursor; cursor += total ? Math.abs(entry.value) / total * 100 : 0; return `${colors[index % colors.length]} ${start}% ${cursor}%`; }); return stops.length ? `conic-gradient(${stops.join(', ')})` : '#e4e8ed'; }
-  protected chartWidth(tagId: string): number { return Math.min(100, Math.abs(this.yearTotal(tagId)) / Math.max(1, Math.abs(this.totalExpenses())) * 100); }
+  protected chartWidth(tagId: string): number { return Math.min(100, Math.abs(this.tagTotal(tagId)) / Math.max(1, Math.abs(this.totalExpenses())) * 100); }
   protected isExcluded(tagId: string): boolean { return this.excludedTagIds().includes(tagId); }
-  protected toggleAnalysisTag(tagId: string): void { this.excludedTagIds.update((ids) => ids.includes(tagId) ? ids.filter((id) => id !== tagId) : [...ids, tagId]); this.cashflowChartReady = false; }
+  protected toggleAnalysisTag(tagId: string): void { this.excludedTagIds.update((ids) => ids.includes(tagId) ? ids.filter((id) => id !== tagId) : [...ids, tagId]); this.cashflowChartReady = false; this.pieChartReady = false; }
   protected async toggleFavorite(tag: Tag): Promise<void> { tag.favorite = !tag.favorite; await this.updateTag(tag); }
+  protected signedAmount(value: number): string { return `${value >= 0 ? '+' : '-'}${this.formatAmount(Math.abs(value))}`; }
   protected useCurrency(code: string): void { this.currency = code; this.recentCurrencyCodes = [code, ...this.recentCurrencyCodes.filter((entry) => entry !== code)].slice(0, 4); this.currencyQuery = ''; }
+  protected recentCurrencyEntries(): { code: string; rate: number }[] { return this.recentCurrencyCodes.map((code) => this.allCurrencies.find((entry) => entry.code === code)).filter((entry): entry is { code: string; rate: number } => Boolean(entry)).filter((entry) => entry.code.toLowerCase().includes(this.currencyQuery.toLowerCase())); }
+  protected remainingCurrencyEntries(): { code: string; rate: number }[] { return this.allCurrencies.filter((entry) => !this.recentCurrencyCodes.includes(entry.code)).filter((entry) => entry.code.toLowerCase().includes(this.currencyQuery.toLowerCase())).sort((first, second) => first.code.localeCompare(second.code)); }
+  protected toggleCurrencyPicker(id: string): void { this.currencyQuery = ''; this.openCurrencyPicker.update((current) => current === id ? null : id); }
+  protected closeCurrencyPicker(): void { this.openCurrencyPicker.set(null); }
+  protected async selectTransactionCurrency(transaction: Transaction, code: string): Promise<void> { transaction.currency = code; transaction.exchangeRateToEur = this.allCurrencies.find((entry) => entry.code === code)?.rate ?? 1; this.recentCurrencyCodes = [code, ...this.recentCurrencyCodes.filter((entry) => entry !== code)].slice(0, 4); this.closeCurrencyPicker(); await this.updateTransaction(transaction); }
   protected isIncome(transaction: Transaction): boolean { return transaction.amountEur > 0; }
   protected isExpense(transaction: Transaction): boolean { return transaction.amountEur < 0; }
   protected investmentResultForYear(): number { return this.realizedInvestmentResults().filter((entry) => entry.date.startsWith(`${this.year()}-`)).reduce((sum, entry) => sum + entry.value, 0); }
 
   ngAfterViewChecked(): void {
-    if (this.homeTab() === 'analysis' && this.cashflowChartElement && (!this.cashflowChartReady || this.cashflowChartHost !== this.cashflowChartElement.nativeElement)) {
+    const homeAnalysisActive = this.context() === 'home' && this.homeTab() === 'analysis';
+    const travelAnalysisActive = this.context() === 'travel' && this.travelTab() === 'analysis';
+    if (homeAnalysisActive && this.cashflowChartElement && (!this.cashflowChartReady || this.cashflowChartHost !== this.cashflowChartElement.nativeElement)) {
       this.renderCashflowChart();
+    }
+    if ((homeAnalysisActive || travelAnalysisActive) && this.pieChartElement && (!this.pieChartReady || this.pieChartHost !== this.pieChartElement.nativeElement)) {
+      this.renderPieChart();
+    }
+    if (this.pieExpanded() && this.pieChartModalElement) {
+      this.renderPieChart(true);
     }
   }
 
@@ -146,25 +171,27 @@ export class App implements AfterViewChecked {
   protected async addAccount(): Promise<void> { if (!this.newAccountName.trim()) return; await this.repository.saveAccount({ id: crypto.randomUUID(), name: this.newAccountName.trim(), listed: true }); this.newAccountName = ''; await this.loadData(); }
   protected async updateAccount(account: Account): Promise<void> { await this.repository.saveAccount(account); await this.loadData(); }
   protected async importTradeRepublic(): Promise<void> {
-    const rows = this.parseTradeRepublicCsv(this.tradeRepublicCsv);
+    const rows = this.tradeRepublicRows();
     if (!rows.length) { this.importStatus = 'Keine gültigen Buchungen gefunden.'; return; }
     let account = this.accounts().find((entry) => entry.name.toLowerCase() === 'trade republic');
     if (!account) { account = { id: crypto.randomUUID(), name: 'Trade Republic', listed: true }; await this.repository.saveAccount(account); await this.loadData(); }
     const existingTransactions = new Set((await this.repository.listTransactions('home')).map((transaction) => transaction.id));
     const existingTrades = new Set((await this.repository.listInvestmentTrades()).map((trade) => trade.id));
+    const pendingWrites: Promise<unknown>[] = [];
     let imported = 0;
     for (const row of rows) {
       const id = this.tradeRepublicId(row);
       if (row.type === 'Buy' || row.type === 'Sell') {
         if (existingTrades.has(id) || !row.isin || !row.shares) continue;
-        await this.repository.saveInvestmentTrade({ id, bookingDate: row.date, type: row.type, merchant: row.note || row.type, isin: row.isin, shares: row.shares, value: row.rawValue, fees: row.fees, taxes: row.taxes });
+        pendingWrites.push(this.repository.saveInvestmentTrade({ id, bookingDate: row.date, type: row.type, merchant: row.note || row.type, isin: row.isin, shares: row.shares, value: row.rawValue, fees: row.fees, taxes: row.taxes }));
       } else {
         if (existingTransactions.has(id)) continue;
         const amount = row.value;
-        await this.repository.saveTransaction({ id, context: 'home', bookingDate: row.date, merchant: row.note || row.type, amount, currency: 'EUR', exchangeRateToEur: 1, amountEur: amount, accountId: account.id, manuallyTagged: false, cashflowType: row.type === 'Deposit' ? 'transfer' : amount >= 0 ? 'income' : 'expense', note: `Trade Republic · ${row.type}` });
+        pendingWrites.push(this.repository.saveTransaction({ id, context: 'home', bookingDate: row.date, merchant: row.note || row.type, amount, currency: 'EUR', exchangeRateToEur: 1, amountEur: amount, accountId: account.id, manuallyTagged: false, cashflowType: row.type === 'Deposit' ? 'transfer' : amount >= 0 ? 'income' : 'expense', note: `Trade Republic · ${row.type}` }));
       }
       imported++;
     }
+    await Promise.all(pendingWrites);
     this.importStatus = `${imported} Buchungen importiert${imported < rows.length ? `, ${rows.length - imported} bereits vorhanden` : ''}.`;
     await this.loadData();
     await this.loadTransactions();
@@ -175,9 +202,10 @@ export class App implements AfterViewChecked {
     if (!file) return;
     this.tradeRepublicFileName = file.name;
     this.tradeRepublicCsv = await file.text();
-    this.importStatus = `${this.tradeRepublicPreview().length} Vorschauzeilen aus ${file.name} geladen.`;
+    this.tradeRepublicRows.set(this.parseTradeRepublicCsv(this.tradeRepublicCsv));
+    this.importStatus = `${this.tradeRepublicRows().length} Buchungen erkannt aus ${file.name}.`;
   }
-  protected tradeRepublicPreview(): TradeRepublicRow[] { return this.parseTradeRepublicCsv(this.tradeRepublicCsv).slice(0, 8); }
+  protected tradeRepublicPreview(): TradeRepublicRow[] { return this.tradeRepublicRows().slice(0, 8); }
   protected async addTrip(): Promise<void> { if (!this.newTripName.trim() || !this.newTripBudget) return; const id = crypto.randomUUID(); await this.repository.saveTrip({ id, name: this.newTripName.trim(), startDate: `${this.year()}-01-01`, endDate: `${this.year()}-12-31`, budget: this.newTripBudget }); this.newTripName = ''; this.newTripBudget = null; this.selectedTripId.set(id); await this.loadData(); await this.loadTransactions(); }
   protected async updateTrip(trip: Trip): Promise<void> { await this.repository.saveTrip(trip); await this.loadData(); }
   protected tripExpenses(tripId: string): number { return this.transactions().filter((transaction) => transaction.tripId === tripId && transaction.amountEur < 0).reduce((sum, transaction) => sum + transaction.amountEur, 0); }
@@ -227,8 +255,51 @@ export class App implements AfterViewChecked {
         }
       }
     }
-    this.cashflowChart.setOption({ animationDuration: 700, tooltip: { trigger: 'item', formatter: '{b}: {c} EUR' }, series: [{ type: 'sankey', left: 8, right: 8, top: 12, bottom: 12, nodeAlign: 'justify', nodeGap: 18, draggable: true, emphasis: { focus: 'adjacency' }, data: nodes, links, label: { color: '#112d4b', fontSize: 11, formatter: (params: { name: string }) => labels.get(params.name) ?? params.name }, lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.42 }, itemStyle: { borderColor: '#fff', borderWidth: 1 } }] });
+    this.cashflowChart.setOption({ animationDuration: 700, tooltip: { trigger: 'item', formatter: (params: { name: string; value: number }) => `${labels.get(params.name) ?? params.name}: ${this.formatAmount(params.value)}` }, series: [{ type: 'sankey', left: '4%', right: '16%', top: 16, bottom: 16, nodeWidth: 14, nodeAlign: 'justify', nodeGap: 18, draggable: true, emphasis: { focus: 'adjacency' }, data: nodes, links, label: { color: '#112d4b', fontSize: 11, overflow: 'truncate', width: 130, formatter: (params: { name: string }) => labels.get(params.name) ?? params.name }, lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.42 }, itemStyle: { borderColor: '#fff', borderWidth: 1 } }] });
+    this.cashflowChart.resize();
     this.cashflowChartReady = true;
+  }
+
+  private renderPieChart(forModal = false): void {
+    const element = forModal ? this.pieChartModalElement?.nativeElement : this.pieChartElement?.nativeElement;
+    if (!element) return;
+    if (forModal) {
+      this.pieChartModal?.dispose();
+      this.pieChartModal = init(element);
+    } else {
+      if (this.pieChartHost !== element) {
+        this.pieChart?.dispose();
+        this.pieChart = undefined;
+        this.pieChartHost = element;
+      }
+      this.pieChart ??= init(element);
+    }
+    const chart = forModal ? this.pieChartModal! : this.pieChart!;
+    const colors = ['#f20d5d', '#112d4b', '#4f87b9', '#f5a623', '#16845a', '#8c5bb3', '#2f9e8f', '#c2410c'];
+    const data = this.pieEntries().map((entry, index) => ({ id: entry.id, name: entry.name, value: Math.abs(entry.value), itemStyle: { color: colors[index % colors.length] } }));
+    chart.setOption({
+      tooltip: { trigger: 'item', formatter: (params: { name: string; value: number; percent: number }) => `${params.name}: ${this.formatAmount(params.value)} (${params.percent}%)` },
+      series: [{
+        type: 'pie',
+        radius: forModal ? ['42%', '72%'] : ['46%', '76%'],
+        center: ['50%', '50%'],
+        data,
+        avoidLabelOverlap: true,
+        label: { formatter: '{b}\n{d}%', color: '#112d4b', fontSize: forModal ? 13 : 10, overflow: 'truncate' },
+        labelLine: { length: 6, length2: 6 },
+        itemStyle: { borderColor: '#fff', borderWidth: 2 },
+        emphasis: { scaleSize: 6 }
+      }]
+    });
+    chart.off('click');
+    chart.on('click', (params: unknown) => { const id = (params as { data?: { id?: string } }).data?.id; if (id) this.toggleAnalysisTag(id); });
+    chart.resize();
+    if (!forModal) this.pieChartReady = true;
+  }
+
+  protected togglePieExpanded(): void {
+    this.pieExpanded.update((value) => !value);
+    if (!this.pieExpanded()) { this.pieChartModal?.dispose(); this.pieChartModal = undefined; }
   }
 
   private async initialize(): Promise<void> { await this.repository.seed(); await this.loadData(); this.accountId = this.accounts()[0]?.id ?? ''; this.selectedTripId.set(this.trips()[0]?.id); await this.loadTransactions(); }
