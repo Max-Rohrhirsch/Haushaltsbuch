@@ -12,6 +12,7 @@ export interface Tag {
   sectionId?: string;
   parentTagId?: string;
   autoTagTerms: string[];
+  favorite?: boolean;
 }
 
 export interface TagSection {
@@ -46,4 +47,17 @@ export interface Transaction {
   tripId?: string;
   updatedAt: string;
   syncStatus: 'pending' | 'synced';
+  cashflowType?: 'income' | 'expense' | 'transfer';
+}
+
+export interface InvestmentTrade {
+  id: string;
+  bookingDate: string;
+  type: 'Buy' | 'Sell';
+  merchant: string;
+  isin: string;
+  shares: number;
+  value: number;
+  fees: number;
+  taxes: number;
 }

@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import localforage from 'localforage';
-import { Account, FinanceContext, Tag, TagSection, Transaction, Trip } from '../model/finance.model';
+import { Account, FinanceContext, InvestmentTrade, Tag, TagSection, Transaction, Trip } from '../model/finance.model';
 
 @Injectable({ providedIn: 'root' })
 export class FinanceRepository {
@@ -9,6 +9,7 @@ export class FinanceRepository {
   private readonly tags = localforage.createInstance({ name: 'finanzbuch', storeName: 'tags' });
   private readonly sections = localforage.createInstance({ name: 'finanzbuch', storeName: 'tag_sections' });
   private readonly trips = localforage.createInstance({ name: 'finanzbuch', storeName: 'trips' });
+  private readonly investmentTrades = localforage.createInstance({ name: 'finanzbuch', storeName: 'investment_trades' });
 
   async seed(): Promise<void> {
     const sections: TagSection[] = [
@@ -60,6 +61,7 @@ export class FinanceRepository {
       ...transaction,
       exchangeRateToEur: transaction.exchangeRateToEur ?? 1,
       amountEur: transaction.amountEur ?? transaction.amount,
+      cashflowType: transaction.cashflowType ?? (transaction.amount >= 0 ? 'income' : 'expense'),
     })).sort((first, second) => second.bookingDate.localeCompare(first.bookingDate));
   }
 
@@ -68,6 +70,9 @@ export class FinanceRepository {
     await this.transactions.setItem(transaction.id, transaction);
     return transaction;
   }
+  async deleteTransaction(id: string): Promise<void> { await this.transactions.removeItem(id); }
+  async listInvestmentTrades(): Promise<InvestmentTrade[]> { return this.listStore<InvestmentTrade>(this.investmentTrades); }
+  async saveInvestmentTrade(trade: InvestmentTrade): Promise<void> { await this.investmentTrades.setItem(trade.id, trade); }
 
   async listAccounts(): Promise<Account[]> { return this.listStore<Account>(this.accounts); }
   async listTags(): Promise<Tag[]> { return this.listStore<Tag>(this.tags); }
@@ -79,12 +84,12 @@ export class FinanceRepository {
   async saveTrip(trip: Trip): Promise<void> { await this.trips.setItem(trip.id, trip); }
   async deleteTag(id: string): Promise<void> { await this.tags.removeItem(id); }
 
-  async applyAutoTags(): Promise<void> {
+  async applyAutoTags(force = false): Promise<void> {
     const tags = await this.listTags();
     const transactions = await this.listTransactions();
     await Promise.all(transactions.filter((transaction) => !transaction.manuallyTagged).map((transaction) => {
       const match = tags.find((tag) => tag.autoTagTerms.some((term) => transaction.merchant.toLowerCase().includes(term.toLowerCase())));
-      return match ? this.saveTransaction({ ...transaction, tagId: match.id }) : Promise.resolve();
+      return force || !transaction.tagId ? this.saveTransaction({ ...transaction, tagId: match?.id }) : Promise.resolve();
     }));
   }
 
