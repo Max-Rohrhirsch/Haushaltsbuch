@@ -60,30 +60,37 @@ For more information on using the Angular CLI, including detailed command refere
 
 ## Docker (z. B. für Raspberry Pi)
 
-Alle Nutzerdaten liegen ausschließlich im Browser (IndexedDB via `localforage`) und werden nie ins Repo oder Image geschrieben – es gibt nichts Persönliches, das vor dem Hochladen auf GitHub entfernt werden müsste.
+Alle Daten liegen primär im Browser (IndexedDB via `localforage`) und funktionieren komplett offline. Sobald ein Backend erreichbar ist, gleicht die App die Daten automatisch ab (`src/app/data/sync.service.ts`), damit sie zwischen Handy und Raspberry Pi synchron bleiben. Es gibt keine Nutzerdaten im Repo oder Image – der Sync-Server persistiert alles ausschließlich in einem separaten Docker-Volume auf dem Pi.
 
-### Image lokal bauen und starten
+Das Compose-Setup startet zwei Container:
+- `finance-app`: Angular-PWA hinter nginx (Port 8080), proxyt `/api/*` intern an den Backend-Container.
+- `finance-backend`: kleiner Node/Express-Server (`backend/`), der die Daten als JSON in `/data` (Docker-Volume `finance-data`) ablegt.
+
+### Lokal bauen und starten
 
 ```bash
 docker compose up --build
 ```
 
-Die App ist danach unter `http://localhost:8080` erreichbar (Port lässt sich in `docker-compose.yml` anpassen).
+Die App ist danach unter `http://localhost:8080` erreichbar (Port lässt sich in `docker-compose.yml` anpassen). Für die lokale Entwicklung ohne Docker: `npm start` (Angular Dev-Server) und parallel `npm start` in `backend/` – `proxy.conf.json` leitet `/api` dabei automatisch an `http://localhost:4300` weiter.
 
-### Image für Raspberry Pi (arm64) bauen und veröffentlichen
+### Images für Raspberry Pi (arm64) bauen und veröffentlichen
 
 Auf einem x86-Rechner per `buildx` für die Pi-Architektur bauen und in eine Registry pushen (z. B. GitHub Container Registry):
 
 ```bash
 docker buildx build --platform linux/arm64 -t ghcr.io/<dein-github-user>/finance-app:latest --push .
+docker buildx build --platform linux/arm64 -t ghcr.io/<dein-github-user>/finance-backend:latest --push ./backend
 ```
 
-Auf dem Raspberry Pi dann nur noch ziehen und starten:
+Auf dem Raspberry Pi reicht dann `docker-compose.yml`, bei der die `build:`-Blöcke durch `image: ghcr.io/<dein-github-user>/finance-app:latest` bzw. `finance-backend:latest` ersetzt werden:
 
 ```bash
-docker pull ghcr.io/<dein-github-user>/finance-app:latest
-docker run -d --name finance-app --restart unless-stopped -p 8080:80 ghcr.io/<dein-github-user>/finance-app:latest
+docker compose pull
+docker compose up -d
 ```
 
-Alternativ mit der `docker-compose.yml` im Projekt-Root: `image:`-Zeile auf `ghcr.io/<dein-github-user>/finance-app:latest` setzen und `docker compose up -d` ausführen.
+### Als "App" auf dem Handy nutzen
+
+Die Seite im mobilen Browser öffnen und über "Zum Startbildschirm hinzufügen" installieren (PWA). Der Service Worker cached die App-Shell für den Offline-Betrieb; Buchungen werden lokal gespeichert und automatisch synchronisiert, sobald wieder Internet/WLAN zum Raspberry Pi besteht (Status siehe Badge oben rechts im Header).
 

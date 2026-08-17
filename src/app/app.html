@@ -2,7 +2,7 @@
   <header class="topbar">
     <div class="brand"><span class="brand-mark">F</span>Finanzbuch</div>
     <nav class="mode-switch"><button [class.active]="context() === 'home'" (click)="switchContext('home')">Haushalt</button><button [class.active]="context() === 'travel'" (click)="switchContext('travel')">Weltreise</button></nav>
-    <span class="offline-status">Offline bereit</span>
+    <span class="offline-status" [class.syncing]="sync.state() === 'syncing'" [class.error]="sync.state() === 'error'" [class.offline]="sync.state() === 'offline'">{{ sync.state() === 'syncing' ? 'Synchronisiert…' : sync.state() === 'error' ? 'Sync fehlgeschlagen' : sync.state() === 'offline' ? 'Offline (lokal gespeichert)' : 'Synchronisiert' }}</span>
   </header>
 
   @if (context() === 'home') {

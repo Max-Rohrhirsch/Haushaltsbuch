@@ -4,6 +4,7 @@ export interface Account {
   id: string;
   name: string;
   listed: boolean;
+  updatedAt: string;
 }
 
 export interface Tag {
@@ -13,12 +14,14 @@ export interface Tag {
   parentTagId?: string;
   autoTagTerms: string[];
   favorite?: boolean;
+  updatedAt: string;
 }
 
 export interface TagSection {
   id: string;
   name: string;
   kind: 'income' | 'expense';
+  updatedAt: string;
 }
 
 export interface Trip {
@@ -27,6 +30,7 @@ export interface Trip {
   startDate: string;
   endDate: string;
   budget: number;
+  updatedAt: string;
 }
 
 export interface Transaction {
@@ -60,4 +64,5 @@ export interface InvestmentTrade {
   value: number;
   fees: number;
   taxes: number;
+  updatedAt: string;
 }

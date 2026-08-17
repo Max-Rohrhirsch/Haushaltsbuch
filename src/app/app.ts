@@ -6,6 +6,7 @@ import { TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import { Account, FinanceContext, InvestmentTrade, Tag, TagSection, Transaction, Trip } from './data/model/finance.model';
 import { FinanceRepository } from './data/repository/finance.repository';
+import { SyncService } from './data/sync.service';
 
 use([SankeyChart, PieChart, TooltipComponent, CanvasRenderer]);
 
@@ -42,6 +43,7 @@ export class App implements AfterViewChecked {
   protected readonly pieExpanded = signal(false);
   protected readonly openCurrencyPicker = signal<string | null>(null);
   private readonly repository = inject(FinanceRepository);
+  protected readonly sync = inject(SyncService);
   protected readonly context = signal<FinanceContext>('home');
   protected readonly homeTab = signal<HomeTab>('overview');
   protected readonly travelTab = signal<TravelTab>('overview');
@@ -174,7 +176,7 @@ export class App implements AfterViewChecked {
     const rows = this.tradeRepublicRows();
     if (!rows.length) { this.importStatus = 'Keine gültigen Buchungen gefunden.'; return; }
     let account = this.accounts().find((entry) => entry.name.toLowerCase() === 'trade republic');
-    if (!account) { account = { id: crypto.randomUUID(), name: 'Trade Republic', listed: true }; await this.repository.saveAccount(account); await this.loadData(); }
+    if (!account) { account = await this.repository.saveAccount({ id: crypto.randomUUID(), name: 'Trade Republic', listed: true }); await this.loadData(); }
     const existingTransactions = new Set((await this.repository.listTransactions('home')).map((transaction) => transaction.id));
     const existingTrades = new Set((await this.repository.listInvestmentTrades()).map((trade) => trade.id));
     const pendingWrites: Promise<unknown>[] = [];
@@ -302,9 +304,9 @@ export class App implements AfterViewChecked {
     if (!this.pieExpanded()) { this.pieChartModal?.dispose(); this.pieChartModal = undefined; }
   }
 
-  private async initialize(): Promise<void> { await this.repository.seed(); await this.loadData(); this.accountId = this.accounts()[0]?.id ?? ''; this.selectedTripId.set(this.trips()[0]?.id); await this.loadTransactions(); }
-  private async loadData(): Promise<void> { const [accounts, tags, sections, trips, investmentTrades] = await Promise.all([this.repository.listAccounts(), this.repository.listTags(), this.repository.listSections(), this.repository.listTrips(), this.repository.listInvestmentTrades()]); this.accounts.set(accounts); this.tags.set(tags); this.sections.set(sections); this.trips.set(trips); this.investmentTrades.set(investmentTrades); }
-  private async loadTransactions(): Promise<void> { this.transactions.set(await this.repository.listTransactions(this.context())); }
+  private async initialize(): Promise<void> { await this.repository.seed(); await this.loadData(); this.accountId = this.accounts()[0]?.id ?? ''; this.selectedTripId.set(this.trips()[0]?.id); await this.loadTransactions(); this.sync.init(); }
+  private async loadData(): Promise<void> { const [accounts, tags, sections, trips, investmentTrades] = await Promise.all([this.repository.listAccounts(), this.repository.listTags(), this.repository.listSections(), this.repository.listTrips(), this.repository.listInvestmentTrades()]); this.accounts.set(accounts); this.tags.set(tags); this.sections.set(sections); this.trips.set(trips); this.investmentTrades.set(investmentTrades); this.sync.notifyChange(); }
+  private async loadTransactions(): Promise<void> { this.transactions.set(await this.repository.listTransactions(this.context())); this.sync.notifyChange(); }
   private parseTradeRepublicCsv(csv: string): TradeRepublicRow[] {
     const lines = csv.split(/\r?\n/).filter((line) => line.trim());
     if (lines.length < 2) return [];

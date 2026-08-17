@@ -1,0 +1,27 @@
+services:
+  finance-backend:
+    build:
+      context: ./backend
+    image: finance-backend:latest
+    container_name: finance-backend
+    restart: unless-stopped
+    volumes:
+      - finance-data:/data
+
+  finance-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Alternatively, once the images are published to a registry, replace the
+    # "build" sections above with e.g.:
+    # image: ghcr.io/<user>/finance-app:latest
+    image: finance-app:latest
+    container_name: finance-app
+    restart: unless-stopped
+    depends_on:
+      - finance-backend
+    ports:
+      - "8080:80"
+
+volumes:
+  finance-data:

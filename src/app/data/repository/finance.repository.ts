@@ -2,6 +2,15 @@ import { Injectable } from '@angular/core';
 import localforage from 'localforage';
 import { Account, FinanceContext, InvestmentTrade, Tag, TagSection, Transaction, Trip } from '../model/finance.model';
 
+export interface SyncEntities {
+  accounts: Account[];
+  tags: Tag[];
+  sections: TagSection[];
+  trips: Trip[];
+  transactions: Transaction[];
+  investmentTrades: InvestmentTrade[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class FinanceRepository {
   private readonly transactions = localforage.createInstance({ name: 'finanzbuch', storeName: 'transactions' });
@@ -12,10 +21,11 @@ export class FinanceRepository {
   private readonly investmentTrades = localforage.createInstance({ name: 'finanzbuch', storeName: 'investment_trades' });
 
   async seed(): Promise<void> {
+    const now = new Date().toISOString();
     const sections: TagSection[] = [
-      { id: 'income-section', name: 'Einnahmen', kind: 'income' },
-      { id: 'fixed-section', name: 'Fixe Ausgaben', kind: 'expense' },
-      { id: 'variable-section', name: 'Variable Ausgaben', kind: 'expense' },
+      { id: 'income-section', name: 'Einnahmen', kind: 'income', updatedAt: now },
+      { id: 'fixed-section', name: 'Fixe Ausgaben', kind: 'expense', updatedAt: now },
+      { id: 'variable-section', name: 'Variable Ausgaben', kind: 'expense', updatedAt: now },
     ];
     await Promise.all(sections.map((section) => this.sections.setItem(section.id, section)));
     if (await this.accounts.length()) {
@@ -27,17 +37,17 @@ export class FinanceRepository {
       return;
     }
     const accounts: Account[] = [
-      { id: 'tr', name: 'Trade Republic', listed: true },
-      { id: 'giro', name: 'Girokonto', listed: true },
-      { id: 'cash', name: 'Bargeld', listed: false },
+      { id: 'tr', name: 'Trade Republic', listed: true, updatedAt: now },
+      { id: 'giro', name: 'Girokonto', listed: true, updatedAt: now },
+      { id: 'cash', name: 'Bargeld', listed: false, updatedAt: now },
     ];
     const tags: Tag[] = [
-      { id: 'income', name: 'Netto Gehalt', sectionId: 'income-section', autoTagTerms: ['gehalt', 'salary'] },
-      { id: 'rent', name: 'Miete', sectionId: 'fixed-section', autoTagTerms: ['vermieter', 'miete'] },
-      { id: 'food', name: 'Lebensmittel', sectionId: 'variable-section', autoTagTerms: ['rewe', 'edeka', 'lidl', 'restaurant'] },
-      { id: 'travel', name: 'Reisen', sectionId: 'variable-section', autoTagTerms: ['airbnb', 'booking', 'bahn'] },
+      { id: 'income', name: 'Netto Gehalt', sectionId: 'income-section', autoTagTerms: ['gehalt', 'salary'], updatedAt: now },
+      { id: 'rent', name: 'Miete', sectionId: 'fixed-section', autoTagTerms: ['vermieter', 'miete'], updatedAt: now },
+      { id: 'food', name: 'Lebensmittel', sectionId: 'variable-section', autoTagTerms: ['rewe', 'edeka', 'lidl', 'restaurant'], updatedAt: now },
+      { id: 'travel', name: 'Reisen', sectionId: 'variable-section', autoTagTerms: ['airbnb', 'booking', 'bahn'], updatedAt: now },
     ];
-    const trips: Trip[] = [{ id: 'portugal-2026', name: 'Portugal 2026', startDate: '2026-09-01', endDate: '2026-10-15', budget: 4500 }];
+    const trips: Trip[] = [{ id: 'portugal-2026', name: 'Portugal 2026', startDate: '2026-09-01', endDate: '2026-10-15', budget: 4500, updatedAt: now }];
     const transactions: Transaction[] = [
       { id: 'seed-1', context: 'home', bookingDate: '2026-08-01', merchant: 'Gehalt', amount: 3200, currency: 'EUR', exchangeRateToEur: 1, amountEur: 3200, accountId: 'giro', tagId: 'income', manuallyTagged: false, updatedAt: '2026-08-01T08:00:00Z', syncStatus: 'pending' },
       { id: 'seed-2', context: 'home', bookingDate: '2026-08-03', merchant: 'Vermieter', amount: -980, currency: 'EUR', exchangeRateToEur: 1, amountEur: -980, accountId: 'giro', tagId: 'rent', manuallyTagged: false, updatedAt: '2026-08-03T08:00:00Z', syncStatus: 'pending' },
@@ -72,16 +82,16 @@ export class FinanceRepository {
   }
   async deleteTransaction(id: string): Promise<void> { await this.transactions.removeItem(id); }
   async listInvestmentTrades(): Promise<InvestmentTrade[]> { return this.listStore<InvestmentTrade>(this.investmentTrades); }
-  async saveInvestmentTrade(trade: InvestmentTrade): Promise<void> { await this.investmentTrades.setItem(trade.id, trade); }
+  async saveInvestmentTrade(trade: Omit<InvestmentTrade, 'updatedAt'>): Promise<InvestmentTrade> { const stamped: InvestmentTrade = { ...trade, updatedAt: new Date().toISOString() }; await this.investmentTrades.setItem(stamped.id, stamped); return stamped; }
 
   async listAccounts(): Promise<Account[]> { return this.listStore<Account>(this.accounts); }
   async listTags(): Promise<Tag[]> { return this.listStore<Tag>(this.tags); }
   async listSections(): Promise<TagSection[]> { return this.listStore<TagSection>(this.sections); }
   async listTrips(): Promise<Trip[]> { return this.listStore<Trip>(this.trips); }
-  async saveAccount(account: Account): Promise<void> { await this.accounts.setItem(account.id, account); }
-  async saveTag(tag: Tag): Promise<void> { await this.tags.setItem(tag.id, tag); }
-  async saveSection(section: TagSection): Promise<void> { await this.sections.setItem(section.id, section); }
-  async saveTrip(trip: Trip): Promise<void> { await this.trips.setItem(trip.id, trip); }
+  async saveAccount(account: Omit<Account, 'updatedAt'>): Promise<Account> { const stamped: Account = { ...account, updatedAt: new Date().toISOString() }; await this.accounts.setItem(stamped.id, stamped); return stamped; }
+  async saveTag(tag: Omit<Tag, 'updatedAt'>): Promise<Tag> { const stamped: Tag = { ...tag, updatedAt: new Date().toISOString() }; await this.tags.setItem(stamped.id, stamped); return stamped; }
+  async saveSection(section: Omit<TagSection, 'updatedAt'>): Promise<TagSection> { const stamped: TagSection = { ...section, updatedAt: new Date().toISOString() }; await this.sections.setItem(stamped.id, stamped); return stamped; }
+  async saveTrip(trip: Omit<Trip, 'updatedAt'>): Promise<Trip> { const stamped: Trip = { ...trip, updatedAt: new Date().toISOString() }; await this.trips.setItem(stamped.id, stamped); return stamped; }
   async deleteTag(id: string): Promise<void> { await this.tags.removeItem(id); }
 
   async applyAutoTags(force = false): Promise<void> {
@@ -91,6 +101,26 @@ export class FinanceRepository {
       const match = tags.find((tag) => tag.autoTagTerms.some((term) => transaction.merchant.toLowerCase().includes(term.toLowerCase())));
       return force || !transaction.tagId ? this.saveTransaction({ ...transaction, tagId: match?.id }) : Promise.resolve();
     }));
+  }
+
+  /** Full local snapshot of every synced entity type, keyed as sent to/received from the backend. */
+  async snapshot(): Promise<SyncEntities> {
+    const [accounts, tags, sections, trips, transactions, investmentTrades] = await Promise.all([
+      this.listAccounts(), this.listTags(), this.listSections(), this.listTrips(), this.listTransactions(), this.listInvestmentTrades(),
+    ]);
+    return { accounts, tags, sections, trips, transactions, investmentTrades };
+  }
+
+  /** Overwrites local records with the server's reconciled state (server already merged by updatedAt). */
+  async applyRemoteSnapshot(entities: Partial<SyncEntities>): Promise<void> {
+    await Promise.all([
+      ...(entities.accounts ?? []).map((account) => this.accounts.setItem(account.id, account)),
+      ...(entities.tags ?? []).map((tag) => this.tags.setItem(tag.id, tag)),
+      ...(entities.sections ?? []).map((section) => this.sections.setItem(section.id, section)),
+      ...(entities.trips ?? []).map((trip) => this.trips.setItem(trip.id, trip)),
+      ...(entities.transactions ?? []).map((transaction) => this.transactions.setItem(transaction.id, { ...transaction, syncStatus: 'synced' as const })),
+      ...(entities.investmentTrades ?? []).map((trade) => this.investmentTrades.setItem(trade.id, trade)),
+    ]);
   }
 
   private async listStore<T>(store: ReturnType<typeof localforage.createInstance>): Promise<T[]> {

@@ -2,6 +2,7 @@ node_modules
 dist
 .angular
 android
+backend
 .git
 .gitignore
 *.md
