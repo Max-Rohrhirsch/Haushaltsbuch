@@ -29,6 +29,8 @@ interface TradeRepublicRow {
 
 interface AnalysisEntry { id: string; name: string; value: number; favorite?: boolean; }
 
+interface PytrResponse { sessionId?: string; countdown?: number; csv?: string; error?: string; }
+
 @Component({ selector: 'app-root', imports: [FormsModule], templateUrl: './app.html', styleUrl: './app.scss' })
 export class App implements AfterViewChecked {
   @ViewChild('cashflowChart') private cashflowChartElement?: ElementRef<HTMLDivElement>;
@@ -101,6 +103,12 @@ export class App implements AfterViewChecked {
   protected newTripBudget: number | null = null;
   protected tradeRepublicCsv = '';
   protected tradeRepublicFileName = '';
+  protected pytrPhone = '';
+  protected pytrPin = '';
+  protected pytrCode = '';
+  protected pytrStatus = '';
+  protected readonly pytrSessionId = signal<string | null>(null);
+  protected readonly pytrBusy = signal(false);
   protected readonly tradeRepublicRows = signal<TradeRepublicRow[]>([]);
   protected importStatus = '';
   protected currencyQuery = '';
@@ -219,6 +227,47 @@ export class App implements AfterViewChecked {
     this.importStatus = `${this.tradeRepublicRows().length} Buchungen erkannt aus ${file.name}.`;
   }
   protected tradeRepublicPreview(): TradeRepublicRow[] { return this.tradeRepublicRows().slice(0, 8); }
+  protected async startPytrLogin(): Promise<void> {
+    if (!this.pytrPhone.trim() || !this.pytrPin.trim()) { this.pytrStatus = 'Bitte Telefonnummer (+49...) und PIN eingeben.'; return; }
+    this.pytrBusy.set(true);
+    this.pytrStatus = 'Melde bei Trade Republic an ...';
+    try {
+      const payload = await this.callPytr('start', { phone: this.pytrPhone.trim(), pin: this.pytrPin.trim() });
+      this.pytrSessionId.set(payload.sessionId ?? null);
+      this.pytrStatus = `Code aus der Trade Republic App eingeben${payload.countdown ? ` (${payload.countdown}s)` : ''}.`;
+    } catch (error) { this.pytrStatus = (error as Error).message; }
+    finally { this.pytrBusy.set(false); }
+  }
+  protected async submitPytrCode(): Promise<void> {
+    const sessionId = this.pytrSessionId();
+    if (!sessionId || !this.pytrCode.trim()) return;
+    this.pytrBusy.set(true);
+    this.pytrStatus = 'Lade Transaktionen von Trade Republic ...';
+    try {
+      const payload = await this.callPytr('code', { sessionId, code: this.pytrCode.trim() });
+      this.pytrSessionId.set(null);
+      this.pytrCode = '';
+      this.tradeRepublicCsv = String(payload.csv ?? '');
+      this.tradeRepublicFileName = 'pytr-Export';
+      this.tradeRepublicRows.set(this.parseTradeRepublicCsv(this.tradeRepublicCsv));
+      this.pytrStatus = `${this.tradeRepublicRows().length} Buchungen geladen.`;
+      await this.importTradeRepublic();
+    } catch (error) { this.pytrStatus = (error as Error).message; }
+    finally { this.pytrBusy.set(false); }
+  }
+  protected async cancelPytrLogin(): Promise<void> {
+    const sessionId = this.pytrSessionId();
+    this.pytrSessionId.set(null);
+    this.pytrCode = '';
+    this.pytrStatus = 'Abgebrochen.';
+    if (sessionId) { try { await this.callPytr('cancel', { sessionId }); } catch { /* Sitzung war bereits beendet */ } }
+  }
+  private async callPytr(action: 'start' | 'code' | 'cancel', body: Record<string, string>): Promise<PytrResponse> {
+    const response = await fetch(`/api/pytr/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const payload: PytrResponse = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error ?? 'pytr ist nicht erreichbar. Läuft das Backend?');
+    return payload;
+  }
   protected async addTrip(): Promise<void> { if (!this.newTripName.trim() || !this.newTripBudget) return; const id = createId(); await this.repository.saveTrip({ id, name: this.newTripName.trim(), startDate: `${this.year()}-01-01`, endDate: `${this.year()}-12-31`, budget: this.newTripBudget }); this.newTripName = ''; this.newTripBudget = null; this.selectedTripId.set(id); await this.loadData(); await this.loadTransactions(); }
   protected async updateTrip(trip: Trip): Promise<void> { await this.repository.saveTrip(trip); await this.loadData(); }
   protected tripExpenses(tripId: string): number { return this.transactions().filter((transaction) => transaction.tripId === tripId && transaction.amountEur < 0).reduce((sum, transaction) => sum + transaction.amountEur, 0); }
