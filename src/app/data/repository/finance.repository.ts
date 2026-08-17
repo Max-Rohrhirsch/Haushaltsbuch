@@ -27,13 +27,9 @@ export class FinanceRepository {
       { id: 'fixed-section', name: 'Fixe Ausgaben', kind: 'expense', updatedAt: now },
       { id: 'variable-section', name: 'Variable Ausgaben', kind: 'expense', updatedAt: now },
     ];
-    await Promise.all(sections.map((section) => this.sections.setItem(section.id, section)));
     if (await this.accounts.length()) {
-      const existingTags = await this.listTags();
-      await Promise.all(existingTags.filter((tag) => !tag.sectionId).map((tag) => this.saveTag({
-        ...tag,
-        sectionId: tag.id === 'income' ? 'income-section' : tag.id === 'rent' ? 'fixed-section' : 'variable-section',
-      })));
+      const existingSectionIds = new Set((await this.listSections()).map((section) => section.id));
+      await Promise.all(sections.filter((section) => !existingSectionIds.has(section.id)).map((section) => this.sections.setItem(section.id, section)));
       return;
     }
     const accounts: Account[] = [
@@ -55,6 +51,7 @@ export class FinanceRepository {
       { id: 'seed-4', context: 'travel', bookingDate: '2026-09-04', merchant: 'Airbnb Lisboa', amount: -360, currency: 'EUR', exchangeRateToEur: 1, amountEur: -360, accountId: 'tr', tagId: 'travel', manuallyTagged: false, tripId: 'portugal-2026', countryCode: 'PT', updatedAt: '2026-09-04T12:00:00Z', syncStatus: 'pending' },
     ];
     await Promise.all([
+      ...sections.map((section) => this.sections.setItem(section.id, section)),
       ...accounts.map((account) => this.accounts.setItem(account.id, account)),
       ...tags.map((tag) => this.tags.setItem(tag.id, tag)),
       ...trips.map((trip) => this.trips.setItem(trip.id, trip)),

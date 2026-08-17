@@ -11,11 +11,15 @@ export class SyncService {
   protected readonly baseUrl = '/api';
   readonly state = signal<SyncState>(navigator.onLine ? 'synced' : 'offline');
   private debounceHandle?: ReturnType<typeof setTimeout>;
+  private refreshHandle?: ReturnType<typeof setInterval>;
+  private onRemoteSync?: () => void;
   private syncing = false;
 
-  init(): void {
+  init(onRemoteSync: () => void): void {
+    this.onRemoteSync = onRemoteSync;
     window.addEventListener('online', () => this.syncNow());
     window.addEventListener('offline', () => this.state.set('offline'));
+    this.refreshHandle ??= setInterval(() => void this.syncNow(), 30_000);
     if (navigator.onLine) void this.syncNow();
   }
 
@@ -42,6 +46,7 @@ export class SyncService {
       const data = (await response.json()) as { serverTime: string; entities: Partial<SyncEntities> };
       await this.repository.applyRemoteSnapshot(data.entities);
       localStorage.setItem(LAST_SYNC_KEY, data.serverTime);
+      this.onRemoteSync?.();
       this.state.set('synced');
     } catch {
       this.state.set(navigator.onLine ? 'error' : 'offline');

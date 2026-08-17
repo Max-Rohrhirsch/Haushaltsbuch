@@ -304,9 +304,10 @@ export class App implements AfterViewChecked {
     if (!this.pieExpanded()) { this.pieChartModal?.dispose(); this.pieChartModal = undefined; }
   }
 
-  private async initialize(): Promise<void> { await this.repository.seed(); await this.loadData(); this.accountId = this.accounts()[0]?.id ?? ''; this.selectedTripId.set(this.trips()[0]?.id); await this.loadTransactions(); this.sync.init(); }
+  private async initialize(): Promise<void> { await this.repository.seed(); await this.loadData(); this.accountId = this.accounts()[0]?.id ?? ''; this.selectedTripId.set(this.trips()[0]?.id); await this.loadTransactions(); this.sync.init(() => { void this.refreshFromSync(); }); }
   private async loadData(): Promise<void> { const [accounts, tags, sections, trips, investmentTrades] = await Promise.all([this.repository.listAccounts(), this.repository.listTags(), this.repository.listSections(), this.repository.listTrips(), this.repository.listInvestmentTrades()]); this.accounts.set(accounts); this.tags.set(tags); this.sections.set(sections); this.trips.set(trips); this.investmentTrades.set(investmentTrades); this.sync.notifyChange(); }
   private async loadTransactions(): Promise<void> { this.transactions.set(await this.repository.listTransactions(this.context())); this.sync.notifyChange(); }
+  private async refreshFromSync(): Promise<void> { const [accounts, tags, sections, trips, investmentTrades, transactions] = await Promise.all([this.repository.listAccounts(), this.repository.listTags(), this.repository.listSections(), this.repository.listTrips(), this.repository.listInvestmentTrades(), this.repository.listTransactions(this.context())]); this.accounts.set(accounts); this.tags.set(tags); this.sections.set(sections); this.trips.set(trips); this.investmentTrades.set(investmentTrades); this.transactions.set(transactions); }
   private parseTradeRepublicCsv(csv: string): TradeRepublicRow[] {
     const lines = csv.split(/\r?\n/).filter((line) => line.trim());
     if (lines.length < 2) return [];
