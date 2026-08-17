@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import localforage from 'localforage';
 import { createId } from '../id';
-import { Account, FinanceContext, InvestmentTrade, Tag, TagSection, Transaction, Trip } from '../model/finance.model';
+import { Account, FinanceContext, InvestmentTrade, SyncTombstone, Tag, TagSection, Transaction, Trip } from '../model/finance.model';
 
 export interface SyncEntities {
   accounts: Account[];
@@ -10,6 +10,7 @@ export interface SyncEntities {
   trips: Trip[];
   transactions: Transaction[];
   investmentTrades: InvestmentTrade[];
+  tombstones: SyncTombstone[];
 }
 
 @Injectable({ providedIn: 'root' })
@@ -20,6 +21,7 @@ export class FinanceRepository {
   private readonly sections = localforage.createInstance({ name: 'finanzbuch', storeName: 'tag_sections' });
   private readonly trips = localforage.createInstance({ name: 'finanzbuch', storeName: 'trips' });
   private readonly investmentTrades = localforage.createInstance({ name: 'finanzbuch', storeName: 'investment_trades' });
+  private readonly tombstones = localforage.createInstance({ name: 'finanzbuch', storeName: 'sync_tombstones' });
 
   async seed(): Promise<void> {
     const now = new Date().toISOString();
@@ -78,7 +80,7 @@ export class FinanceRepository {
     await this.transactions.setItem(transaction.id, transaction);
     return transaction;
   }
-  async deleteTransaction(id: string): Promise<void> { await this.transactions.removeItem(id); }
+  async deleteTransaction(id: string): Promise<void> { await Promise.all([this.transactions.removeItem(id), this.saveTombstone('transactions', id)]); }
   async listInvestmentTrades(): Promise<InvestmentTrade[]> { return this.listStore<InvestmentTrade>(this.investmentTrades); }
   async saveInvestmentTrade(trade: Omit<InvestmentTrade, 'updatedAt'>): Promise<InvestmentTrade> { const stamped: InvestmentTrade = { ...trade, updatedAt: new Date().toISOString() }; await this.investmentTrades.setItem(stamped.id, stamped); return stamped; }
 
@@ -90,7 +92,7 @@ export class FinanceRepository {
   async saveTag(tag: Omit<Tag, 'updatedAt'>): Promise<Tag> { const stamped: Tag = { ...tag, updatedAt: new Date().toISOString() }; await this.tags.setItem(stamped.id, stamped); return stamped; }
   async saveSection(section: Omit<TagSection, 'updatedAt'>): Promise<TagSection> { const stamped: TagSection = { ...section, updatedAt: new Date().toISOString() }; await this.sections.setItem(stamped.id, stamped); return stamped; }
   async saveTrip(trip: Omit<Trip, 'updatedAt'>): Promise<Trip> { const stamped: Trip = { ...trip, updatedAt: new Date().toISOString() }; await this.trips.setItem(stamped.id, stamped); return stamped; }
-  async deleteTag(id: string): Promise<void> { await this.tags.removeItem(id); }
+  async deleteTag(id: string): Promise<void> { await Promise.all([this.tags.removeItem(id), this.saveTombstone('tags', id)]); }
 
   async applyAutoTags(force = false): Promise<void> {
     const tags = await this.listTags();
@@ -103,10 +105,10 @@ export class FinanceRepository {
 
   /** Full local snapshot of every synced entity type, keyed as sent to/received from the backend. */
   async snapshot(): Promise<SyncEntities> {
-    const [accounts, tags, sections, trips, transactions, investmentTrades] = await Promise.all([
-      this.listAccounts(), this.listTags(), this.listSections(), this.listTrips(), this.listTransactions(), this.listInvestmentTrades(),
+    const [accounts, tags, sections, trips, transactions, investmentTrades, tombstones] = await Promise.all([
+      this.listAccounts(), this.listTags(), this.listSections(), this.listTrips(), this.listTransactions(), this.listInvestmentTrades(), this.listTombstones(),
     ]);
-    return { accounts, tags, sections, trips, transactions, investmentTrades };
+    return { accounts, tags, sections, trips, transactions, investmentTrades, tombstones };
   }
 
   /** Overwrites local records with the server's reconciled state (server already merged by updatedAt). */
@@ -119,7 +121,12 @@ export class FinanceRepository {
       ...(entities.transactions ?? []).map((transaction) => this.transactions.setItem(transaction.id, { ...transaction, syncStatus: 'synced' as const })),
       ...(entities.investmentTrades ?? []).map((trade) => this.investmentTrades.setItem(trade.id, trade)),
     ]);
+    await Promise.all((entities.tombstones ?? []).map((tombstone) => this.applyTombstone(tombstone)));
   }
+
+  private async saveTombstone(collection: SyncTombstone['collection'], id: string): Promise<void> { const tombstone: SyncTombstone = { collection, id, deletedAt: new Date().toISOString() }; await this.tombstones.setItem(`${collection}:${id}`, tombstone); }
+  private async listTombstones(): Promise<SyncTombstone[]> { return this.listStore<SyncTombstone>(this.tombstones); }
+  private async applyTombstone(tombstone: SyncTombstone): Promise<void> { if (tombstone.collection === 'transactions') await this.transactions.removeItem(tombstone.id); else await this.tags.removeItem(tombstone.id); await this.tombstones.setItem(`${tombstone.collection}:${tombstone.id}`, tombstone); }
 
   private async listStore<T>(store: ReturnType<typeof localforage.createInstance>): Promise<T[]> {
     const result: T[] = [];

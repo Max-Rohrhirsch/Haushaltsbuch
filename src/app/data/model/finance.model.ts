@@ -66,3 +66,9 @@ export interface InvestmentTrade {
   taxes: number;
   updatedAt: string;
 }
+
+export interface SyncTombstone {
+  collection: 'tags' | 'transactions';
+  id: string;
+  deletedAt: string;
+}

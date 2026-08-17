@@ -20,18 +20,17 @@ export class SyncService {
     window.addEventListener('online', () => this.syncNow());
     window.addEventListener('offline', () => this.state.set('offline'));
     this.refreshHandle ??= setInterval(() => void this.syncNow(), 30_000);
-    if (navigator.onLine) void this.syncNow();
+    void this.syncNow();
   }
 
   /** Called after any local write; batches rapid successive changes into a single sync request. */
   notifyChange(): void {
-    if (!navigator.onLine) { this.state.set('offline'); return; }
     if (this.debounceHandle) clearTimeout(this.debounceHandle);
     this.debounceHandle = setTimeout(() => void this.syncNow(), 1500);
   }
 
   async syncNow(): Promise<void> {
-    if (this.syncing || !navigator.onLine) return;
+    if (this.syncing) return;
     this.syncing = true;
     this.state.set('syncing');
     try {
