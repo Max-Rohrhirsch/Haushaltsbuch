@@ -20,10 +20,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: finanzprogramm
+          - name: haushaltsbuch-web
             context: .
             file: ./Dockerfile
-          - name: finanzprogramm-backend
+          - name: haushaltsbuch-backend
             context: ./backend
             file: ./backend/Dockerfile
     steps:
