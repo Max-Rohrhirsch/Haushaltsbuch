@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import localforage from 'localforage';
+import { createId } from '../id';
 import { Account, FinanceContext, InvestmentTrade, Tag, TagSection, Transaction, Trip } from '../model/finance.model';
 
 export interface SyncEntities {
@@ -73,7 +74,7 @@ export class FinanceRepository {
   }
 
   async saveTransaction(draft: Omit<Transaction, 'id' | 'updatedAt' | 'syncStatus'> & Partial<Pick<Transaction, 'id'>>): Promise<Transaction> {
-    const transaction: Transaction = { ...draft, id: draft.id ?? crypto.randomUUID(), updatedAt: new Date().toISOString(), syncStatus: 'pending' };
+    const transaction: Transaction = { ...draft, id: draft.id ?? createId(), updatedAt: new Date().toISOString(), syncStatus: 'pending' };
     await this.transactions.setItem(transaction.id, transaction);
     return transaction;
   }

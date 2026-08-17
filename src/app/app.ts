@@ -5,6 +5,7 @@ import { PieChart, SankeyChart } from 'echarts/charts';
 import { TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import { Account, FinanceContext, InvestmentTrade, Tag, TagSection, Transaction, Trip } from './data/model/finance.model';
+import { createId } from './data/id';
 import { FinanceRepository } from './data/repository/finance.repository';
 import { SyncService } from './data/sync.service';
 
@@ -82,6 +83,7 @@ export class App implements AfterViewChecked {
   protected readonly tagName = computed(() => new Map(this.tags().map((tag) => [tag.id, tag.name])));
   protected merchant = '';
   protected amount: number | null = null;
+  protected transactionSaveError = '';
   protected bookingDate = '';
   protected note = '';
   protected location = '';
@@ -155,7 +157,11 @@ export class App implements AfterViewChecked {
   }
 
   protected async saveTransaction(): Promise<void> {
-    if (!this.merchant.trim() || !this.amount || !this.accountId) return;
+    this.transactionSaveError = '';
+    if (!this.merchant.trim()) { this.showTransactionSaveError('Bitte eine Beschreibung eingeben.'); return; }
+    if (this.amount === null || !Number.isFinite(this.amount) || this.amount === 0) { this.showTransactionSaveError('Bitte einen Betrag ungleich 0 eingeben.'); return; }
+    if (!this.accountId) { this.showTransactionSaveError('Bitte ein Konto auswählen.'); return; }
+    if (this.context() === 'travel' && !this.selectedTripId()) { this.showTransactionSaveError('Bitte zuerst eine Reise auswählen.'); return; }
     const rate = this.currencies.find((entry) => entry.code === this.currency)?.rate ?? 1;
     await this.repository.saveTransaction({ context: this.context(), bookingDate: this.bookingDate || `${this.year()}-${String(this.month() + 1).padStart(2, '0')}-01`, merchant: this.merchant.trim(), amount: this.amount, currency: this.currency, exchangeRateToEur: rate, amountEur: this.amount * rate, accountId: this.accountId, tagId: this.tagId || undefined, note: this.note.trim() || undefined, location: this.location.trim() || undefined, manuallyTagged: Boolean(this.tagId), tripId: this.context() === 'travel' ? this.selectedTripId() : undefined });
     this.useCurrency(this.currency); this.merchant = ''; this.amount = null; this.bookingDate = ''; this.note = ''; this.location = ''; this.tagId = ''; this.currency = 'EUR';
@@ -163,20 +169,21 @@ export class App implements AfterViewChecked {
   }
 
   protected async updateTransaction(transaction: Transaction): Promise<void> { transaction.amountEur = transaction.amount * transaction.exchangeRateToEur; await this.repository.saveTransaction(transaction); await this.loadTransactions(); }
+  private showTransactionSaveError(message: string): void { this.transactionSaveError = message; window.alert(message); }
   protected async deleteTransaction(transaction: Transaction): Promise<void> { await this.repository.deleteTransaction(transaction.id); await this.loadTransactions(); }
   protected async updateTagTerms(tag: Tag, terms: string): Promise<void> { tag.autoTagTerms = terms.split(',').map((term) => term.trim()).filter((term) => Boolean(term)); await this.updateTag(tag); }
-  protected async addTag(): Promise<void> { if (!this.newTagName.trim()) return; await this.repository.saveTag({ id: crypto.randomUUID(), name: this.newTagName.trim(), sectionId: this.newTagSectionId || undefined, parentTagId: this.newTagParentId || undefined, autoTagTerms: this.newTagTerms.split(',').map((term) => term.trim()).filter(Boolean) }); this.newTagName = ''; this.newTagTerms = ''; this.newTagParentId = ''; await this.loadData(); }
+  protected async addTag(): Promise<void> { if (!this.newTagName.trim()) return; await this.repository.saveTag({ id: createId(), name: this.newTagName.trim(), sectionId: this.newTagSectionId || undefined, parentTagId: this.newTagParentId || undefined, autoTagTerms: this.newTagTerms.split(',').map((term) => term.trim()).filter(Boolean) }); this.newTagName = ''; this.newTagTerms = ''; this.newTagParentId = ''; await this.loadData(); }
   protected async updateTag(tag: Tag): Promise<void> { await this.repository.saveTag(tag); await this.loadData(); }
   protected async deleteTag(id: string): Promise<void> { await this.repository.deleteTag(id); await this.loadData(); }
-  protected async addSection(): Promise<void> { if (!this.newSectionName.trim()) return; await this.repository.saveSection({ id: crypto.randomUUID(), name: this.newSectionName.trim(), kind: this.newSectionKind }); this.newSectionName = ''; await this.loadData(); }
+  protected async addSection(): Promise<void> { if (!this.newSectionName.trim()) return; await this.repository.saveSection({ id: createId(), name: this.newSectionName.trim(), kind: this.newSectionKind }); this.newSectionName = ''; await this.loadData(); }
   protected async runAutoTagging(): Promise<void> { await this.repository.applyAutoTags(this.forceAutoTagging); await this.loadTransactions(); }
-  protected async addAccount(): Promise<void> { if (!this.newAccountName.trim()) return; await this.repository.saveAccount({ id: crypto.randomUUID(), name: this.newAccountName.trim(), listed: true }); this.newAccountName = ''; await this.loadData(); }
+  protected async addAccount(): Promise<void> { if (!this.newAccountName.trim()) return; await this.repository.saveAccount({ id: createId(), name: this.newAccountName.trim(), listed: true }); this.newAccountName = ''; await this.loadData(); }
   protected async updateAccount(account: Account): Promise<void> { await this.repository.saveAccount(account); await this.loadData(); }
   protected async importTradeRepublic(): Promise<void> {
     const rows = this.tradeRepublicRows();
     if (!rows.length) { this.importStatus = 'Keine gültigen Buchungen gefunden.'; return; }
     let account = this.accounts().find((entry) => entry.name.toLowerCase() === 'trade republic');
-    if (!account) { account = await this.repository.saveAccount({ id: crypto.randomUUID(), name: 'Trade Republic', listed: true }); await this.loadData(); }
+    if (!account) { account = await this.repository.saveAccount({ id: createId(), name: 'Trade Republic', listed: true }); await this.loadData(); }
     const existingTransactions = new Set((await this.repository.listTransactions('home')).map((transaction) => transaction.id));
     const existingTrades = new Set((await this.repository.listInvestmentTrades()).map((trade) => trade.id));
     const pendingWrites: Promise<unknown>[] = [];
@@ -208,7 +215,7 @@ export class App implements AfterViewChecked {
     this.importStatus = `${this.tradeRepublicRows().length} Buchungen erkannt aus ${file.name}.`;
   }
   protected tradeRepublicPreview(): TradeRepublicRow[] { return this.tradeRepublicRows().slice(0, 8); }
-  protected async addTrip(): Promise<void> { if (!this.newTripName.trim() || !this.newTripBudget) return; const id = crypto.randomUUID(); await this.repository.saveTrip({ id, name: this.newTripName.trim(), startDate: `${this.year()}-01-01`, endDate: `${this.year()}-12-31`, budget: this.newTripBudget }); this.newTripName = ''; this.newTripBudget = null; this.selectedTripId.set(id); await this.loadData(); await this.loadTransactions(); }
+  protected async addTrip(): Promise<void> { if (!this.newTripName.trim() || !this.newTripBudget) return; const id = createId(); await this.repository.saveTrip({ id, name: this.newTripName.trim(), startDate: `${this.year()}-01-01`, endDate: `${this.year()}-12-31`, budget: this.newTripBudget }); this.newTripName = ''; this.newTripBudget = null; this.selectedTripId.set(id); await this.loadData(); await this.loadTransactions(); }
   protected async updateTrip(trip: Trip): Promise<void> { await this.repository.saveTrip(trip); await this.loadData(); }
   protected tripExpenses(tripId: string): number { return this.transactions().filter((transaction) => transaction.tripId === tripId && transaction.amountEur < 0).reduce((sum, transaction) => sum + transaction.amountEur, 0); }
   protected tripProgress(trip: Trip): number { return Math.min(100, Math.abs(this.tripExpenses(trip.id)) / Math.max(1, trip.budget) * 100); }
