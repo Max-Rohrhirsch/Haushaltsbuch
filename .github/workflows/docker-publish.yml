@@ -48,6 +48,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/max-rohrhirsch/${{ matrix.name }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
