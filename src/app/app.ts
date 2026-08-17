@@ -82,7 +82,7 @@ export class App implements AfterViewChecked {
   protected readonly analysisTags = computed(() => this.analysisEntries());
   protected readonly tagName = computed(() => new Map(this.tags().map((tag) => [tag.id, tag.name])));
   protected merchant = '';
-  protected amount: number | null = null;
+  protected amount: number | string | null = null;
   protected transactionSaveError = '';
   protected bookingDate = '';
   protected note = '';
@@ -143,6 +143,7 @@ export class App implements AfterViewChecked {
   protected investmentResultForYear(): number { return this.realizedInvestmentResults().filter((entry) => entry.date.startsWith(`${this.year()}-`)).reduce((sum, entry) => sum + entry.value, 0); }
 
   ngAfterViewChecked(): void {
+    this.enableSignedAmountInputs();
     const homeAnalysisActive = this.context() === 'home' && this.homeTab() === 'analysis';
     const travelAnalysisActive = this.context() === 'travel' && this.travelTab() === 'analysis';
     if (homeAnalysisActive && this.cashflowChartElement && (!this.cashflowChartReady || this.cashflowChartHost !== this.cashflowChartElement.nativeElement)) {
@@ -159,17 +160,20 @@ export class App implements AfterViewChecked {
   protected async saveTransaction(): Promise<void> {
     this.transactionSaveError = '';
     if (!this.merchant.trim()) { this.showTransactionSaveError('Bitte eine Beschreibung eingeben.'); return; }
-    if (this.amount === null || !Number.isFinite(this.amount) || this.amount === 0) { this.showTransactionSaveError('Bitte einen Betrag ungleich 0 eingeben.'); return; }
+    const amount = this.parseAmount(this.amount);
+    if (amount === null || amount === 0) { this.showTransactionSaveError('Bitte einen Betrag ungleich 0 eingeben.'); return; }
     if (!this.accountId) { this.showTransactionSaveError('Bitte ein Konto auswählen.'); return; }
     if (this.context() === 'travel' && !this.selectedTripId()) { this.showTransactionSaveError('Bitte zuerst eine Reise auswählen.'); return; }
     const rate = this.currencies.find((entry) => entry.code === this.currency)?.rate ?? 1;
-    await this.repository.saveTransaction({ context: this.context(), bookingDate: this.bookingDate || `${this.year()}-${String(this.month() + 1).padStart(2, '0')}-01`, merchant: this.merchant.trim(), amount: this.amount, currency: this.currency, exchangeRateToEur: rate, amountEur: this.amount * rate, accountId: this.accountId, tagId: this.tagId || undefined, note: this.note.trim() || undefined, location: this.location.trim() || undefined, manuallyTagged: Boolean(this.tagId), tripId: this.context() === 'travel' ? this.selectedTripId() : undefined });
+    await this.repository.saveTransaction({ context: this.context(), bookingDate: this.bookingDate || `${this.year()}-${String(this.month() + 1).padStart(2, '0')}-01`, merchant: this.merchant.trim(), amount, currency: this.currency, exchangeRateToEur: rate, amountEur: amount * rate, accountId: this.accountId, tagId: this.tagId || undefined, note: this.note.trim() || undefined, location: this.location.trim() || undefined, manuallyTagged: Boolean(this.tagId), tripId: this.context() === 'travel' ? this.selectedTripId() : undefined });
     this.useCurrency(this.currency); this.merchant = ''; this.amount = null; this.bookingDate = ''; this.note = ''; this.location = ''; this.tagId = ''; this.currency = 'EUR';
     await this.loadTransactions();
   }
 
   protected async updateTransaction(transaction: Transaction): Promise<void> { transaction.amountEur = transaction.amount * transaction.exchangeRateToEur; await this.repository.saveTransaction(transaction); await this.loadTransactions(); }
   private showTransactionSaveError(message: string): void { this.transactionSaveError = message; window.alert(message); }
+  private parseAmount(value: number | string | null): number | null { const parsed = typeof value === 'number' ? value : Number(value?.trim().replace(',', '.')); return Number.isFinite(parsed) ? parsed : null; }
+  private enableSignedAmountInputs(): void { if (typeof document === 'undefined') return; document.querySelectorAll<HTMLInputElement>('input[name="amount"], input[name="travelAmount"]').forEach((input) => { input.type = 'text'; input.inputMode = 'text'; }); }
   protected async deleteTransaction(transaction: Transaction): Promise<void> { await this.repository.deleteTransaction(transaction.id); await this.loadTransactions(); }
   protected async updateTagTerms(tag: Tag, terms: string): Promise<void> { tag.autoTagTerms = terms.split(',').map((term) => term.trim()).filter((term) => Boolean(term)); await this.updateTag(tag); }
   protected async addTag(): Promise<void> { if (!this.newTagName.trim()) return; await this.repository.saveTag({ id: createId(), name: this.newTagName.trim(), sectionId: this.newTagSectionId || undefined, parentTagId: this.newTagParentId || undefined, autoTagTerms: this.newTagTerms.split(',').map((term) => term.trim()).filter(Boolean) }); this.newTagName = ''; this.newTagTerms = ''; this.newTagParentId = ''; await this.loadData(); }
