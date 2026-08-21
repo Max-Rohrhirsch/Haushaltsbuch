@@ -149,7 +149,7 @@ app.post('/api/pytr/start', async (request, response) => {
     return response.status(400).json({ error: message.message ?? 'Login fehlgeschlagen.' });
   }
   pytrSessions.set(session.id, session);
-  response.json({ sessionId: session.id, countdown: message.countdown ?? null });
+  response.json({ sessionId: session.id, countdown: message.countdown ?? null, needsCode: message.needsCode !== false });
 });
 
 app.post('/api/pytr/code', async (request, response) => {

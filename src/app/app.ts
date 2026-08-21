@@ -29,7 +29,7 @@ interface TradeRepublicRow {
 
 interface AnalysisEntry { id: string; name: string; value: number; favorite?: boolean; }
 
-interface PytrResponse { sessionId?: string; countdown?: number; csv?: string; error?: string; }
+interface PytrResponse { sessionId?: string; countdown?: number; needsCode?: boolean; csv?: string; error?: string; }
 
 @Component({ selector: 'app-root', imports: [FormsModule], templateUrl: './app.html', styleUrl: './app.scss' })
 export class App implements AfterViewChecked {
@@ -45,6 +45,7 @@ export class App implements AfterViewChecked {
   private pieChartModal?: ECharts;
   protected readonly pieExpanded = signal(false);
   protected readonly openCurrencyPicker = signal<string | null>(null);
+  protected readonly selectedFlowNode = signal<{ id: string; label: string; tagIds: string[] | null; untagged: 'income' | 'expense' | null } | null>(null);
   private readonly repository = inject(FinanceRepository);
   protected readonly sync = inject(SyncService);
   protected readonly context = signal<FinanceContext>('home');
@@ -71,6 +72,8 @@ export class App implements AfterViewChecked {
   protected readonly totalExpenses = computed(() => this.yearTransactions().filter((transaction) => this.isExpense(transaction)).reduce((sum, transaction) => sum + transaction.amountEur, 0));
   protected readonly balance = computed(() => this.totalIncome() + this.totalExpenses() + this.investmentResultForYear());
   protected readonly listedBalance = computed(() => this.yearTransactions().filter((transaction) => this.accounts().find((account) => account.id === transaction.accountId)?.listed).reduce((sum, transaction) => sum + transaction.amountEur, 0));
+  protected readonly totalAccountBalance = computed(() => this.transactions().filter((transaction) => this.accounts().find((account) => account.id === transaction.accountId)?.listed).reduce((sum, transaction) => sum + transaction.amountEur, 0));
+  protected readonly investedCapital = computed(() => { const holdings = this.currentHoldings(); let sum = 0; for (const holding of holdings.values()) sum += holding.cost; return sum; });
   protected readonly analysisEntries = computed<AnalysisEntry[]>(() => {
     const entries: AnalysisEntry[] = this.tags().filter((tag) => !tag.parentTagId && !this.isExcluded(tag.id)).map((tag) => { const value = this.tagTotal(tag.id); return { id: tag.id, name: `${tag.favorite ? '★ ' : ''}${tag.name}`, value, favorite: tag.favorite }; });
     const untaggedIncome = this.yearTransactions().filter((transaction) => !transaction.tagId && this.isIncome(transaction)).reduce((sum, transaction) => sum + transaction.amountEur, 0);
@@ -82,7 +85,18 @@ export class App implements AfterViewChecked {
   });
   protected readonly pieEntries = computed(() => this.analysisEntries().filter((entry) => entry.value < 0));
   protected readonly analysisTags = computed(() => this.analysisEntries());
+  protected readonly flowSelectionTransactions = computed(() => {
+    const selection = this.selectedFlowNode();
+    if (!selection) return [];
+    const tagIds = selection.tagIds;
+    const untagged = selection.untagged;
+    return this.yearTransactions()
+      .filter((transaction) => tagIds ? Boolean(transaction.tagId && tagIds.includes(transaction.tagId)) : untagged ? !transaction.tagId && (untagged === 'income' ? this.isIncome(transaction) : this.isExpense(transaction)) : false)
+      .sort((first, second) => second.bookingDate.localeCompare(first.bookingDate));
+  });
   protected readonly tagName = computed(() => new Map(this.tags().map((tag) => [tag.id, tag.name])));
+  protected accountName(accountId: string): string { return this.accounts().find((account) => account.id === accountId)?.name ?? '—'; }
+  protected formatDate(value: string): string { if (!value) return ''; const [y, m, d] = value.split('-'); return d && m && y ? `${d}.${m}.${y}` : value; }
   protected merchant = '';
   protected amount: number | string | null = null;
   protected transactionSaveError = '';
@@ -108,6 +122,7 @@ export class App implements AfterViewChecked {
   protected pytrCode = '';
   protected pytrStatus = '';
   protected readonly pytrSessionId = signal<string | null>(null);
+  protected readonly pytrNeedsCode = signal(true);
   protected readonly pytrBusy = signal(false);
   protected readonly tradeRepublicRows = signal<TradeRepublicRow[]>([]);
   protected importStatus = '';
@@ -118,9 +133,9 @@ export class App implements AfterViewChecked {
 
   constructor() { void this.initialize(); }
 
-  protected async switchContext(context: FinanceContext): Promise<void> { this.context.set(context); await this.loadTransactions(); }
+  protected async switchContext(context: FinanceContext): Promise<void> { this.context.set(context); this.selectedFlowNode.set(null); await this.loadTransactions(); }
   protected changeMonth(delta: number): void { const date = new Date(this.year(), this.month() + delta, 1); this.year.set(date.getFullYear()); this.month.set(date.getMonth()); }
-  protected changeYear(delta: number): void { this.year.update((year) => year + delta); }
+  protected changeYear(delta: number): void { this.year.update((year) => year + delta); this.selectedFlowNode.set(null); }
   protected async selectTrip(id: string | undefined): Promise<void> { this.selectedTripId.set(id); await this.loadTransactions(); }
   protected tagsInSection(sectionId: string): Tag[] { return this.tags().filter((tag) => tag.sectionId === sectionId); }
   protected unassignedTags(): Tag[] { return this.tags().filter((tag) => !tag.sectionId); }
@@ -137,7 +152,7 @@ export class App implements AfterViewChecked {
   protected sectionTags(section: TagSection): Tag[] { return this.tagsInSection(section.id).filter((tag) => !tag.parentTagId && !this.isExcluded(tag.id)); }
   protected chartWidth(tagId: string): number { return Math.min(100, Math.abs(this.tagTotal(tagId)) / Math.max(1, Math.abs(this.totalExpenses())) * 100); }
   protected isExcluded(tagId: string): boolean { return this.excludedTagIds().includes(tagId); }
-  protected toggleAnalysisTag(tagId: string): void { this.excludedTagIds.update((ids) => ids.includes(tagId) ? ids.filter((id) => id !== tagId) : [...ids, tagId]); this.cashflowChartReady = false; this.pieChartReady = false; }
+  protected toggleAnalysisTag(tagId: string): void { this.excludedTagIds.update((ids) => ids.includes(tagId) ? ids.filter((id) => id !== tagId) : [...ids, tagId]); this.cashflowChartReady = false; this.pieChartReady = false; this.selectedFlowNode.set(null); }
   protected async toggleFavorite(tag: Tag): Promise<void> { tag.favorite = !tag.favorite; await this.updateTag(tag); }
   protected signedAmount(value: number): string { return `${value >= 0 ? '+' : '-'}${this.formatAmount(Math.abs(value))}`; }
   protected useCurrency(code: string): void { this.currency = code; this.recentCurrencyCodes = [code, ...this.recentCurrencyCodes.filter((entry) => entry !== code)].slice(0, 4); this.currencyQuery = ''; }
@@ -186,6 +201,7 @@ export class App implements AfterViewChecked {
   protected async updateTagTerms(tag: Tag, terms: string): Promise<void> { tag.autoTagTerms = terms.split(',').map((term) => term.trim()).filter((term) => Boolean(term)); await this.updateTag(tag); }
   protected async addTag(): Promise<void> { if (!this.newTagName.trim()) return; await this.repository.saveTag({ id: createId(), name: this.newTagName.trim(), sectionId: this.newTagSectionId || undefined, parentTagId: this.newTagParentId || undefined, autoTagTerms: this.newTagTerms.split(',').map((term) => term.trim()).filter(Boolean) }); this.newTagName = ''; this.newTagTerms = ''; this.newTagParentId = ''; await this.loadData(); }
   protected async updateTag(tag: Tag): Promise<void> { await this.repository.saveTag(tag); await this.loadData(); }
+  protected async moveTagToSection(tag: Tag, sectionId: string): Promise<void> { tag.sectionId = sectionId || undefined; await this.updateTag(tag); }
   protected async deleteTag(id: string): Promise<void> { await this.repository.deleteTag(id); await this.loadData(); }
   protected async addSection(): Promise<void> { if (!this.newSectionName.trim()) return; await this.repository.saveSection({ id: createId(), name: this.newSectionName.trim(), kind: this.newSectionKind }); this.newSectionName = ''; await this.loadData(); }
   protected async runAutoTagging(): Promise<void> { await this.repository.applyAutoTags(this.forceAutoTagging); await this.loadTransactions(); }
@@ -234,13 +250,16 @@ export class App implements AfterViewChecked {
     try {
       const payload = await this.callPytr('start', { phone: this.pytrPhone.trim(), pin: this.pytrPin.trim() });
       this.pytrSessionId.set(payload.sessionId ?? null);
-      this.pytrStatus = `Code aus der Trade Republic App eingeben${payload.countdown ? ` (${payload.countdown}s)` : ''}.`;
+      this.pytrNeedsCode.set(payload.needsCode !== false);
+      this.pytrStatus = this.pytrNeedsCode()
+        ? `Code aus der Trade Republic App eingeben${payload.countdown ? ` (${payload.countdown}s)` : ''}.`
+        : `Bitte den Login in der Trade Republic App bestätigen${payload.countdown ? ` (${payload.countdown}s)` : ''}.`;
     } catch (error) { this.pytrStatus = (error as Error).message; }
     finally { this.pytrBusy.set(false); }
   }
   protected async submitPytrCode(): Promise<void> {
     const sessionId = this.pytrSessionId();
-    if (!sessionId || !this.pytrCode.trim()) return;
+    if (!sessionId || (this.pytrNeedsCode() && !this.pytrCode.trim())) return;
     this.pytrBusy.set(true);
     this.pytrStatus = 'Lade Transaktionen von Trade Republic ...';
     try {
@@ -286,38 +305,52 @@ export class App implements AfterViewChecked {
     const nodes: { name: string }[] = [];
     const labels = new Map<string, string>();
     const links: { source: string; target: string; value: number }[] = [];
+    const nodeTagIds = new Map<string, string[]>();
+    const nodeUntagged = new Map<string, 'income' | 'expense'>();
     const addNode = (name: string, label = name): void => { if (!nodes.some((node) => node.name === name)) nodes.push({ name }); labels.set(name, label); };
+    const collectTagIds = (tag: Tag): string[] => [tag.id, ...this.directChildTags(tag.id).flatMap((child) => collectTagIds(child))];
     const budgetNode = 'Gesamtbudget';
     addNode(budgetNode, 'Gesamtbudget');
     const incomeOther = this.yearTransactions().filter((transaction) => !transaction.tagId && this.isIncome(transaction)).reduce((sum, transaction) => sum + transaction.amountEur, 0);
     const expenseOther = this.yearTransactions().filter((transaction) => !transaction.tagId && this.isExpense(transaction)).reduce((sum, transaction) => sum + transaction.amountEur, 0);
-    if (incomeOther) { addNode('income-other', 'Sonstiges'); links.push({ source: 'income-other', target: budgetNode, value: incomeOther }); }
-    if (expenseOther) { addNode('expense-other', 'Sonstiges'); links.push({ source: budgetNode, target: 'expense-other', value: Math.abs(expenseOther) }); }
+    if (incomeOther) { addNode('income-other', 'Sonstiges'); links.push({ source: 'income-other', target: budgetNode, value: incomeOther }); nodeUntagged.set('income-other', 'income'); }
+    if (expenseOther) { addNode('expense-other', 'Sonstiges'); links.push({ source: budgetNode, target: 'expense-other', value: Math.abs(expenseOther) }); nodeUntagged.set('expense-other', 'expense'); }
+    const addTagChain = (tag: Tag, parentNode: string, kind: 'income' | 'expense'): void => {
+      if (this.isExcluded(tag.id)) return;
+      const value = Math.abs(this.tagTotal(tag.id));
+      if (!value) return;
+      const tagNode = `tag-${tag.id}`;
+      addNode(tagNode, tag.name);
+      nodeTagIds.set(tagNode, collectTagIds(tag));
+      if (kind === 'income') links.push({ source: tagNode, target: parentNode, value });
+      else links.push({ source: parentNode, target: tagNode, value });
+      for (const child of this.directChildTags(tag.id)) addTagChain(child, tagNode, kind);
+    };
     for (const section of this.sections()) {
-      const sectionValue = Math.abs(this.sectionTotal(section.id));
+      const topTags = this.sectionTags(section).filter((tag) => !this.isExcluded(tag.id));
+      const sectionValue = topTags.reduce((sum, tag) => sum + Math.abs(this.tagTotal(tag.id)), 0);
       if (!sectionValue) continue;
       const sectionNode = `${section.kind}-${section.id}`;
       addNode(sectionNode, section.name);
+      nodeTagIds.set(sectionNode, topTags.flatMap((tag) => collectTagIds(tag)));
       if (section.kind === 'income') links.push({ source: sectionNode, target: budgetNode, value: sectionValue });
       else links.push({ source: budgetNode, target: sectionNode, value: sectionValue });
-      for (const tag of this.sectionTags(section)) {
-        const tagValue = Math.abs(this.yearTotal(tag.id));
-        if (!tagValue) continue;
-        const tagNode = `${sectionNode}-${tag.id}`;
-        addNode(tagNode, tag.name);
-        if (section.kind === 'income') links.push({ source: tagNode, target: sectionNode, value: tagValue });
-        else links.push({ source: sectionNode, target: tagNode, value: tagValue });
-        for (const child of this.childTags(tag.id)) {
-          const childValue = Math.abs(this.yearTotal(child.id));
-          if (!childValue) continue;
-          const childNode = `${tagNode}-${child.id}`;
-          addNode(childNode, child.name);
-          if (section.kind === 'income') links.push({ source: childNode, target: tagNode, value: childValue });
-          else links.push({ source: tagNode, target: childNode, value: childValue });
-        }
-      }
+      for (const tag of topTags) addTagChain(tag, sectionNode, section.kind);
+    }
+    for (const tag of this.tags().filter((entry) => !entry.parentTagId && !entry.sectionId)) {
+      const total = this.tagTotal(tag.id);
+      if (!total) continue;
+      addTagChain(tag, budgetNode, total >= 0 ? 'income' : 'expense');
     }
     this.cashflowChart.setOption({ animationDuration: 700, tooltip: { trigger: 'item', formatter: (params: { name: string; value: number }) => `${labels.get(params.name) ?? params.name}: ${this.formatAmount(params.value)}` }, series: [{ type: 'sankey', left: '4%', right: '16%', top: 16, bottom: 16, nodeWidth: 14, nodeAlign: 'justify', nodeGap: 18, draggable: true, emphasis: { focus: 'adjacency' }, data: nodes, links, label: { color: '#112d4b', fontSize: 11, overflow: 'truncate', width: 130, formatter: (params: { name: string }) => labels.get(params.name) ?? params.name }, lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.42 }, itemStyle: { borderColor: '#fff', borderWidth: 1 } }] });
+    this.cashflowChart.off('click');
+    this.cashflowChart.on('click', (params: unknown) => {
+      const name = (params as { data?: { name?: string } }).data?.name;
+      if (!name) return;
+      if (name === budgetNode) { this.selectedFlowNode.set(null); return; }
+      const untagged = nodeUntagged.get(name);
+      this.selectedFlowNode.set({ id: name, label: labels.get(name) ?? name, tagIds: nodeTagIds.get(name) ?? null, untagged: untagged ?? null });
+    });
     this.cashflowChart.resize();
     this.cashflowChartReady = true;
   }
@@ -393,6 +426,25 @@ export class App implements AfterViewChecked {
   }
   private tradeRepublicId(row: TradeRepublicRow): string { let hash = 2166136261; for (const character of `${row.date}|${row.type}|${row.rawValue}|${row.note}|${row.isin}|${row.shares}|${row.fees}|${row.taxes}`) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619); return `tr-import-${(hash >>> 0).toString(16)}`; }
   private isExcludedTradeCashflow(transaction: Transaction): boolean { return transaction.cashflowType === 'transfer' || transaction.note?.startsWith('Trade Republic · Deposit') === true || transaction.note?.startsWith('Trade Republic · Buy') === true || transaction.note?.startsWith('Trade Republic · Sell') === true; }
+  private currentHoldings(): Map<string, { shares: number; cost: number }> {
+    const holdings = new Map<string, { shares: number; cost: number }>();
+    const trades = [...this.investmentTrades()].sort((first, second) => `${first.bookingDate}|${first.id}`.localeCompare(`${second.bookingDate}|${second.id}`));
+    for (const trade of trades) {
+      const current = holdings.get(trade.isin) ?? { shares: 0, cost: 0 };
+      if (trade.type === 'Buy') {
+        current.shares += trade.shares;
+        current.cost += Math.abs(trade.value) + Math.abs(trade.fees) + Math.abs(trade.taxes);
+      } else {
+        const averageCost = current.shares > 0 ? current.cost / current.shares : 0;
+        const soldShares = Math.min(trade.shares, current.shares);
+        current.shares = Math.max(0, current.shares - trade.shares);
+        current.cost = Math.max(0, current.cost - averageCost * soldShares);
+      }
+      holdings.set(trade.isin, current);
+    }
+    return holdings;
+  }
+
   private realizedInvestmentResults(): { date: string; value: number }[] {
     const holdings = new Map<string, { shares: number; cost: number }>();
     const results: { date: string; value: number }[] = [];

@@ -35,13 +35,21 @@ def read_message():
 
 
 def build_api(phone, pin):
-    """Try the WAF token strategies in order of least setup required."""
+    """Try the v2 login first (no WAF token needed), then fall back to v1 WAF strategies."""
     from pytr.api import TradeRepublicApi
 
-    if "waf_token" not in inspect.signature(TradeRepublicApi.__init__).parameters:
+    params = inspect.signature(TradeRepublicApi.__init__).parameters
+    if "waf_token" not in params:
         raise RuntimeError("Die installierte pytr-Version ist zu alt. Bitte 'pip install -U pytr' ausführen.")
 
     failures = []
+    if "use_v2_login" in params:
+        api = TradeRepublicApi(phone_no=phone, pin=pin, save_cookies=False, use_v2_login=True, waf_token=None)
+        try:
+            return api, api.initiate_weblogin()
+        except Exception as error:  # noqa: BLE001 - fall back to v1 strategies below
+            failures.append(f"v2: {error}")
+
     for waf_token in ("awswaf", "playwright", None):
         api = TradeRepublicApi(phone_no=phone, pin=pin, save_cookies=False, waf_token=waf_token)
         try:
@@ -86,11 +94,12 @@ def main():
         emit({"event": "error", "message": f"Login fehlgeschlagen: {error}"})
         return
 
-    emit({"event": "need_code", "countdown": countdown})
+    needs_code = getattr(api, "weblogin_needs_authenticator", True)
+    emit({"event": "need_code", "countdown": countdown, "needsCode": bool(needs_code)})
 
     code = (read_message().get("code") or "").strip()
     try:
-        api.complete_weblogin(code)
+        api.complete_weblogin(code or None)
     except Exception as error:  # noqa: BLE001 - reported to the UI
         emit({"event": "error", "message": f"Code wurde abgelehnt: {error}"})
         return
